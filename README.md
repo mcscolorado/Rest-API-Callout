@@ -1,5 +1,4 @@
-# VehicleVerification
-VIN verification and gather vehicle details
+# Create user in external system
 
 AccountTrigger - When Account is created or Updated - Make a United Express callout to create user
 
