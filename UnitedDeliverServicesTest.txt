@@ -1,0 +1,50 @@
+@IsTest
+public with sharing class UnitedDeliverServicesTest {
+    public static testMethod void testgetDriverNumber(){
+        Id accountClientRTId = Schema.SObjectType.Account.RecordTypeInfosByName.get('Client').RecordTypeId;
+        Account testClient = new Account(Name = 'Reliable Express - Peru', RecordTypeId = accountClientRTId);
+        insert testClient;
+         test.startTest();
+       
+        Id accountDriverRTId = Schema.SObjectType.Account.RecordTypeInfosByName.get('Driver').RecordTypeId;
+        Account testDriver = new Account(Name = 'Test Driver', First_Name__c = 'firstName', Last_Name__c = 'lastName',
+                                         BillingStreet = 'street', BillingCity = 'city', BillingState = 'state', 
+                                         BillingPostalCode = '11111', BillingCountry= 'USA', Email__c = 'test@test.com', Cell_Phone__c = '1111111111',
+                                         Home_Phone__c = '1111111111', SS__c = '111111111',
+                                         RecordTypeId = accountDriverRTId);
+        
+        insert testDriver;
+        
+        Vehicle__c testvehicle = new Vehicle__c( Driver__c = testDriver.Id, Type_of_Vehicle__c = 'Van', VIN__c = '123');
+        
+        DriverClientRelationshipDriver__c dcRel = new DriverClientRelationshipDriver__c();
+        dcRel.ClientFleetVendorAccount__c ='Reliable Express - Peru';
+        dcRel.Driver__c = testDriver.id;
+        insert dcRel;
+        
+        UDS__c dOne = new UDS__c();
+        dOne.Name = 'Test';
+        dOne.URL__c = 'http://test2.uniteddeliveryservice.com/flexworkforce';
+        dOne.Credentials__c = 'sdfdsfsdfsdfsdfs';
+        insert dOne;
+        
+        UnitedDeliveryServiceDistroID__c uds = new UnitedDeliveryServiceDistroID__c();
+        uds.Name = 'Peru';
+        uds.DistroID__c = 3;
+        insert uds;
+
+        List<Id> accountList = new List<Id>();
+        accountList.add(testDriver.id);
+   
+        // Set mock callout class
+        Test.setMock(HttpCalloutMock.class, new MockHttpUDSResponseGenerator());
+        // Call method to test. This causes a fake response to be sent from the class that implements HttpCalloutMock.
+        UnitedDeliverServices.restAPICallout(accountList);
+        test.stopTest();
+        
+        Account afterUpdateAcc = [Select id, ExternalDriverNumber__c from Account where id = :testDriver.id];
+        System.assertEquals('3210184', afterUpdateAcc.ExternalDriverNumber__c);
+
+    }
+
+}

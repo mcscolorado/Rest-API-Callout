@@ -1,0 +1,143 @@
+public with sharing class UnitedDeliverServices {
+    public static void getDriverNumber(List<Account> triggerNew){
+        List<Id> accountList = new List<Id>();
+        List<Id> updateAccList = new List<Id>();
+        
+        System.debug('In UnitedDeliverServices');
+        
+        for(Account newAccount: triggerNew)
+        {
+            if((newAccount.ExternalDriverNumber__c == '' || newAccount.ExternalDriverNumber__c == null) && newAccount.Status__c == 'Active'){
+                accountList.add(newAccount.id);                
+            }
+        }
+        System.debug('accountList: '+accountList);
+        
+        List<DriverClientRelationshipDriver__c> driverClientDriver = [Select Driver__c, ClientFleetVendorAccount__c, Driver__r.Name
+                                                                      from DriverClientRelationshipDriver__c
+                                                                      where Driver__c in :accountList];
+        
+        System.debug('driverClientDriver: '+driverClientDriver);
+
+        for(DriverClientRelationshipDriver__c dcd: driverClientDriver){
+            if((dcd.ClientFleetVendorAccount__c).startsWith('Reliable'))
+                updateAccList.add(dcd.Driver__c);
+            
+        }
+        System.debug('updateAccList: '+updateAccList);
+        
+        if(updateAccList.size() > 0 && !Test.isRunningTest() && !System.isFuture()){
+            restAPICallout(updateAccList);
+        }       
+    }
+    
+    //Method to call United Delivery Services
+    @Future(callout=true)
+    public static void restAPICallout(List<Id> accountList){
+        System.debug('In API Callout');
+        UDS__c UDS = UDS__c.getValues('Test');
+        
+        String status = '';
+        
+        String URL =  UDS.URL__c;//URL;
+        String appKey = UDS.Credentials__c;
+        
+        URL = URL+'/user/create';
+        
+        List<Account> accounts = [SELECT Id, First_Name__c, Last_Name__c, BillingStreet, BillingCity, BillingState, BillingPostalCode,
+                                  BillingCountry, Email__c, Cell_Phone__c, Home_Phone__c, SS__c, VehicleType__c, PrimaryVehicleVIN__c 
+                                  FROM Account WHERE id IN :accountList]; 
+        
+        List<DriverClientRelationshipDriver__c> driverClientDriver = [Select Driver__c, ClientFleetVendorAccount__c 
+                                                                      from DriverClientRelationshipDriver__c
+                                                                      where Driver__c in :accountList];
+        Map<id, String> dcdSet = new Map<id,String>();
+        for(DriverClientRelationshipDriver__c dcd: driverClientDriver){
+            dcdSet.put(dcd.Driver__c, dcd.ClientFleetVendorAccount__c);
+            
+        }
+        System.debug('dcdSet: '+dcdSet);
+        List<Account> accountsToUpsert = new List<Account>();
+
+        for(Account a: accounts){
+            try{
+
+                Http http = new Http();
+           
+                HttpRequest req = new HttpRequest();
+                req.setEndpoint(URL); 
+                System.debug('URL: '+URL);
+                
+                req.setMethod('POST');
+                req.setHeader('KEY', appKey);
+                JSONGenerator gen = JSON.createGenerator(true);    
+                gen.writeStartObject();      
+                gen.writeStringField('firstName', a.First_Name__c);
+                gen.writeStringField('lastName', a.Last_Name__c);
+                gen.writeStringField('addr1', a.BillingStreet);
+                gen.writeStringField('city', a.BillingCity);
+                gen.writeStringField('state', a.BillingState);
+                gen.writeStringField('zip', a.BillingPostalCode);
+                gen.writeStringField('email', a.Email__c);
+                gen.writeStringField('cellPhone', a.Cell_Phone__c);
+                if(a.Home_Phone__c != null)
+                    gen.writeStringField('homePhone', a.Home_Phone__c);
+                else 
+                    gen.writeStringField('homePhone', a.Cell_Phone__c);
+                gen.writeStringField('ssn', a.SS__c);
+                if(a.VehicleType__c == 'Passenger Car' || a.VehicleType__c == 'SUV')
+                    gen.writeStringField('vehicleType', 'Car');
+                else if(a.VehicleType__c == 'Pickup Truck')
+                    gen.writeStringField('vehicleType', 'Pickup');
+                else if(a.VehicleType__c == 'Van')
+                    gen.writeStringField('vehicleType', 'Mini Van');
+                else if(a.VehicleType__c == 'Cargo Van')
+                    gen.writeStringField('vehicleType', 'Cargo Van');
+                else if(a.VehicleType__c == 'Sprinter Van')
+                    gen.writeStringField('vehicleType', 'Sprinter');
+                else if(a.VehicleType__c == 'Box Truck' || a.VehicleType__c == 'Tractor Trailer')
+                    gen.writeStringField('vehicleType', 'Box Truck');
+    
+                String clientName = dcdSet.get(a.Id);
+                UnitedDeliveryServiceDistroID__c distroCS = UnitedDeliveryServiceDistroID__c.getValues(clientName.substringAfter('- '));
+                System.debug('distroCS: '+distroCS);
+                gen.writeStringField('distroId', String.valueOf(distroCS.DistroID__c));
+                if(!Test.isRunningTest())
+                    gen.writeStringField('vin', a.PrimaryVehicleVIN__c);
+                gen.writeEndObject();    
+                String jsonS = gen.getAsString();
+                System.debug('jsonMaterials'+jsonS);
+                req.setBody(jsonS);
+                System.debug('Request: '+ req.getBody());
+                HTTPResponse res = http.send(req);
+                System.debug('res: '+res);
+                if(res.getStatus() == 'OK'){
+                    System.debug('res: '+res);
+                    System.debug('res body: '+res.getBody());
+                    JSONParser parser = JSON.createParser(res.getBody());
+                    while (parser.nextToken() != null) {
+                        if ((parser.getCurrentToken() == JSONToken.FIELD_NAME) &&((parser.getText() == 'id'))) {
+                            parser.nextToken();
+                            a.ExternalDriverNumber__c = parser.getText();
+                            a.United_Express_Error__c = '';
+                        }
+                    }
+                }
+                else{
+                    a.United_Express_Error__c = res.getBody();
+                }
+
+                accountsToUpsert.add(a);
+    
+            }
+            catch(System.Exception ex){
+                a.United_Express_Error__c = ex.getMessage();
+                accountsToUpsert.add(a);
+                
+            }
+        }
+        if(accountsToUpsert.size() > 0)
+            upsert accountsToUpsert;
+    }
+
+}

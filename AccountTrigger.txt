@@ -1,0 +1,7 @@
+trigger AccountTrigger on Account (after update, after insert) {
+    System.debug('In account trigger');
+
+    if(Trigger.isAfter){
+		UnitedDeliverServices.getDriverNumber(Trigger.new);
+    }
+}
